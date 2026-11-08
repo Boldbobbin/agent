@@ -1,0 +1,15 @@
+{
+  "name": "boldbobbin",
+  "description": "Boldbobbin's plugin for Claude Code: work on the embroidery design open in Boldbobbin.",
+  "owner": {
+    "name": "Boldbobbin",
+    "url": "https://boldbobbin.com"
+  },
+  "plugins": [
+    {
+      "name": "boldbobbin",
+      "source": "./",
+      "description": "Lets Claude Code work on the design you have open in Boldbobbin, in the browser or the desktop app."
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "boldbobbin",
+  "displayName": "Boldbobbin",
+  "version": "0.3.0",
+  "description": "Lets Claude Code work on the embroidery design you have open in Boldbobbin, in the browser or the desktop app: read it, edit it with short scripts you can undo, and see the real stitches.",
+  "author": {
+    "name": "Boldbobbin",
+    "url": "https://boldbobbin.com"
+  },
+  "homepage": "https://github.com/Boldbobbin/agent",
+  "repository": "https://github.com/Boldbobbin/agent",
+  "keywords": [
+    "embroidery",
+    "boldbobbin",
+    "design"
+  ],
+  "mcpServers": {
+    "boldbobbin": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/relay.mjs"
+      ]
+    }
+  },
+  "license": "MIT"
+}
