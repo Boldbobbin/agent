@@ -1,6 +1,6 @@
 {
   "name": "@boldbobbin/agent",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Lets an MCP agent (Claude Code, Codex, Cursor…) work on the design open in Boldbobbin, in the browser or the desktop app.",
   "type": "module",
   "bin": {
@@ -16,6 +16,9 @@
     "node": ">=18"
   },
   "homepage": "https://github.com/Boldbobbin/agent",
-  "repository": "github:Boldbobbin/agent",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Boldbobbin/agent.git"
+  },
   "license": "MIT"
 }

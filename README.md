@@ -10,16 +10,42 @@ it with short scripts you can undo, and see the real stitches.
 /plugin install boldbobbin --marketplace Boldbobbin/agent
 ```
 
-Then start a new session. In Boldbobbin choose **File > Connect an AI agent…**
-and paste the prompt it shows into Claude Code.
+Then start a new session. In Boldbobbin choose **Agent > I have my own…** (or
+**File > Connect an AI agent…**) and paste the prompt it shows into Claude
+Code.
 
 On Claude Code older than 2.1.275, add the marketplace first:
 `/plugin marketplace add Boldbobbin/agent`, then
 `/plugin install boldbobbin@boldbobbin`.
 
+## Codex
+
+In a terminal, with the Codex CLI:
+
+```
+codex mcp add boldbobbin -- npx -y @boldbobbin/agent
+```
+
+With Codex in VS Code or the Codex app, which may leave no `codex` command in
+the terminal, add these lines to `~/.codex/config.toml` instead (in VS Code:
+Codex's gear menu > MCP settings > Open config.toml), or paste the prompt and
+let Codex add them:
+
+```toml
+[mcp_servers.boldbobbin]
+command = "npx"
+args = ["-y", "@boldbobbin/agent"]
+```
+
+Then start Codex again (in VS Code: restart the extension). In Boldbobbin choose **Agent > I have my own…** (or
+**File > Connect an AI agent…**) and paste the prompt it shows into Codex. The
+first start downloads the bridge; if the Boldbobbin tools are missing the
+first time, start Codex once more.
+
 ## Other agents
 
-Add the bridge as a local (stdio) MCP server:
+Every agent needs Node 18 or newer. Add the bridge as a local (stdio) MCP
+server (in Cursor: `~/.cursor/mcp.json`):
 
 ```json
 { "mcpServers": { "boldbobbin": { "command": "npx", "args": ["-y", "@boldbobbin/agent"] } } }
@@ -41,6 +67,15 @@ carries messages; it never reads or changes a design itself.
 - Accepts browser connections only from Boldbobbin's own pages (the `Origin`
   header).
 - An agent still needs the pairing code Boldbobbin shows, once per design.
+- Files are read and written here, on your computer; the app never sees a
+  path. `boldbobbin_add_picture` reads a PNG, JPEG, WebP, GIF or BMP picture
+  (15 MB at most, checked by its first bytes). `boldbobbin_export` writes a
+  machine file only with the format's own extension (`.pes`, `.dst`…), and
+  never over an existing file unless the agent passes `overwrite`. The
+  bridge runs outside an agent's own sandbox, so ask your agent to write
+  only where you said.
+- An export follows the app's own rules: a design holding Pro features
+  your plan does not include is refused, as the Export button does.
 - Your browser may ask whether the Boldbobbin page may reach apps on this
   device: allow it.
 

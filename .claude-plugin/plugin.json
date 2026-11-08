@@ -1,7 +1,7 @@
 {
   "name": "boldbobbin",
   "displayName": "Boldbobbin",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Lets Claude Code work on the embroidery design you have open in Boldbobbin, in the browser or the desktop app: read it, edit it with short scripts you can undo, and see the real stitches.",
   "author": {
     "name": "Boldbobbin",

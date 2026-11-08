@@ -14,6 +14,12 @@
 // every other call to the app that owns the session. It never reads or
 // changes a design itself.
 //
+// Files cross here, on the person's computer, so the app never touches a
+// path: boldbobbin_add_picture reads a picture (sniffed, 15 MB at most) and
+// sends its bytes; boldbobbin_export takes the machine file's bytes from the
+// app and writes them, only with the format's own extension, and never over
+// an existing file unless the agent says overwrite.
+//
 // Several agents can run a bridge each: a bridge takes the first free port
 // of 47832 to 47835, and a tab connects to every bridge it finds. Only pages
 // from Boldbobbin's own origins may connect (Origin checked on the
@@ -25,7 +31,10 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { homedir } from "node:os";
+import path from "node:path";
 import { createInterface } from "node:readline";
 
 const CATALOGUE = JSON.parse(readFileSync(new URL("./catalogue.json", import.meta.url), "utf8"));
@@ -46,7 +55,9 @@ const MAX_MESSAGE = 32 * 1024 * 1024;
 /** A tab is pinged this often, and dropped after this long in silence. */
 const PING_MS = 30_000;
 const SILENT_MS = 90_000;
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
+/** The largest picture boldbobbin_add_picture reads. */
+const MAX_PICTURE = 15 * 1024 * 1024;
 
 const log = (...args) => process.stderr.write(`[boldbobbin] ${args.join(" ")}\n`);
 
@@ -110,6 +121,82 @@ async function onAgentMessage(message) {
   }
 }
 
+// ---- Files ----------------------------------------------------------------
+
+/** An agent's path: absolute, or under the home folder with ~. */
+function resolvePath(given) {
+  if (typeof given !== "string" || given.length === 0) return { error: "path is missing" };
+  const expanded = given === "~" ? homedir() : given.startsWith("~/") ? path.join(homedir(), given.slice(2)) : given;
+  if (!path.isAbsolute(expanded)) return { error: `path must be absolute or start with ~ (got ${given})` };
+  return { path: path.normalize(expanded) };
+}
+
+async function statOf(p) {
+  try {
+    return await stat(p);
+  } catch {
+    return null;
+  }
+}
+
+/** What a picture's first bytes say it is, or null. */
+function sniff(bytes) {
+  const at = (i, ...b) => b.every((v, k) => bytes[i + k] === v);
+  if (at(0, 0x89, 0x50, 0x4e, 0x47)) return "image/png";
+  if (at(0, 0xff, 0xd8, 0xff)) return "image/jpeg";
+  if (at(0, 0x47, 0x49, 0x46, 0x38)) return "image/gif";
+  if (at(0, 0x42, 0x4d)) return "image/bmp";
+  if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) return "image/webp";
+  return null;
+}
+
+async function readPicture(given) {
+  const resolved = resolvePath(given);
+  if (resolved.error) return resolved;
+  const st = await statOf(resolved.path);
+  if (!st || !st.isFile()) return { error: `no file at ${resolved.path}` };
+  if (st.size > MAX_PICTURE) return { error: `the picture is ${Math.round(st.size / 1024 / 1024)} MB; at most 15 MB` };
+  const bytes = await readFile(resolved.path);
+  const mime = sniff(bytes);
+  if (!mime) return { error: `${resolved.path} is not a PNG, JPEG, WebP, GIF or BMP picture` };
+  return { data: bytes.toString("base64"), mime, name: path.basename(resolved.path) };
+}
+
+/** Where an export goes, checked before the app does any work: a file with
+ *  the format's extension (added when it has none), or an existing folder. */
+async function exportTarget(args) {
+  const resolved = resolvePath(args.path);
+  if (resolved.error) return resolved;
+  const format = String(args.format ?? "").toLowerCase();
+  const st = await statOf(resolved.path);
+  if (st?.isDirectory()) return { folder: resolved.path };
+  let file = resolved.path;
+  const ext = path.extname(file).toLowerCase();
+  if (ext === "") file = `${file}.${format}`;
+  else if (ext !== `.${format}`) return { error: `the path ends in ${ext}, but the format is ${format}: use a .${format} name` };
+  const parent = await statOf(path.dirname(file));
+  if (!parent?.isDirectory()) return { error: `the folder ${path.dirname(file)} does not exist` };
+  if (!args.overwrite && (await statOf(file))) return { error: `a file is already at ${file}; pass overwrite: true to replace it, or choose another name` };
+  return { file };
+}
+
+async function writeExport(target, args, answer) {
+  const result = answer?.result;
+  const sc = result?.structuredContent;
+  if (!result || result.isError || typeof sc?.data !== "string") return result ?? toolError("no_app", "Boldbobbin did not answer");
+  const file = target.file ?? path.join(target.folder, String(sc.fileName ?? `design.${args.format}`));
+  try {
+    await writeFile(file, Buffer.from(sc.data, "base64"), { flag: args.overwrite ? "w" : "wx" });
+  } catch (err) {
+    return toolError(
+      err?.code === "EEXIST" ? "file_exists" : "write_failed",
+      err?.code === "EEXIST" ? `a file is already at ${file}; pass overwrite: true to replace it` : `could not write ${file}: ${err?.message ?? err}`,
+    );
+  }
+  const { data: _data, ...facts } = sc;
+  return structured({ ...facts, path: file, fileName: path.basename(file) });
+}
+
 /** Which app (a tab, or the desktop) owns which session. */
 const sessionPeers = new Map();
 
@@ -147,9 +234,25 @@ async function callTool(message, params) {
   if (name === "boldbobbin_help") return help(message, args.topic);
   if (name === "boldbobbin_wait_for_app") return waitForApp(args);
 
+  // Files: the picture read and sent as bytes; the export's target checked
+  // now and written from the answer. The app never sees a path.
+  let sent = args;
+  let target = null;
+  if (name === "boldbobbin_add_picture") {
+    const picture = await readPicture(args.path);
+    if (picture.error) return toolError("bad_path", picture.error);
+    const { path: _path, ...rest } = args;
+    sent = { ...rest, data: picture.data, mime: picture.mime, name: picture.name };
+  } else if (name === "boldbobbin_export") {
+    target = await exportTarget(args);
+    if (target.error) return toolError("bad_path", target.error);
+    const { path: _path, overwrite: _overwrite, ...rest } = args;
+    sent = { ...rest, delivery: "bytes" };
+  }
+
   const forwarded = {
     ...message,
-    params: { ...params, _meta: { ...(params._meta ?? {}), ...(clientInfo ? { "boldbobbin/client": clientInfo } : {}) } },
+    params: { ...params, arguments: sent, _meta: { ...(params._meta ?? {}), ...(clientInfo ? { "boldbobbin/client": clientInfo } : {}) } },
   };
   const reachable = await peers();
   if (reachable.length === 0) return toolError("no_app", listenError ?? NO_APP);
@@ -181,6 +284,7 @@ async function callTool(message, params) {
   if (!peer) return toolError("no_session", "unknown sessionId; ask the person for a new code (File > Connect an AI agent…)");
   const answer = await peer.call(forwarded);
   if (answer?.error) return toolError("app_error", answer.error.message ?? "the app could not answer");
+  if (target) return writeExport(target, args, answer);
   return answer?.result ?? toolError("no_app", "Boldbobbin did not answer");
 }
 
