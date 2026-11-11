@@ -18,7 +18,10 @@
 // path: boldbobbin_add_picture reads a picture (sniffed, 15 MB at most) and
 // sends its bytes; boldbobbin_export takes the machine file's bytes from the
 // app and writes them, only with the format's own extension, and never over
-// an existing file unless the agent says overwrite.
+// an existing file unless the agent says overwrite; boldbobbin_save with a
+// path does the same for a .vemb copy, boldbobbin_import reads artwork, a
+// machine file or a design to add to the open one, and boldbobbin_open reads a .vemb
+// (50 MB at most) and sends its bytes.
 //
 // Several agents can run a bridge each: a bridge takes the first free port
 // of 47832 to 47835, and a tab connects to every bridge it finds. Only pages
@@ -55,7 +58,7 @@ const MAX_MESSAGE = 32 * 1024 * 1024;
 /** A tab is pinged this often, and dropped after this long in silence. */
 const PING_MS = 30_000;
 const SILENT_MS = 90_000;
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 /** The largest picture boldbobbin_add_picture reads. */
 const MAX_PICTURE = 15 * 1024 * 1024;
 
@@ -180,6 +183,43 @@ async function exportTarget(args) {
   return { file };
 }
 
+/** The largest design boldbobbin_open reads. */
+const MAX_DESIGN = 50 * 1024 * 1024;
+
+/** Where a .vemb copy goes: as an export's, with the .vemb extension. */
+function saveTarget(args) {
+  return exportTarget({ ...args, format: "vemb" });
+}
+
+async function readDesign(given) {
+  const resolved = resolvePath(given);
+  if (resolved.error) return resolved;
+  if (path.extname(resolved.path).toLowerCase() !== ".vemb") return { error: `${resolved.path} is not a Boldbobbin design (.vemb)` };
+  const st = await statOf(resolved.path);
+  if (!st || !st.isFile()) return { error: `no file at ${resolved.path}` };
+  if (st.size > MAX_DESIGN) return { error: `the design is ${Math.round(st.size / 1024 / 1024)} MB; at most 50 MB` };
+  const bytes = await readFile(resolved.path);
+  return { data: bytes.toString("base64"), name: path.basename(resolved.path), path: resolved.path };
+}
+
+/** What boldbobbin_import reads: artwork, machine files and designs. The
+ *  app decides what each is; the bridge only refuses what it never takes. */
+const IMPORT_EXTENSIONS = new Set([".svg", ".pdf", ".ai", ".vemb", ".dst", ".pes", ".exp", ".jef", ".pec", ".vp3", ".u01", ".xxx", ".tap", ".hus", ".100", ".10o"]);
+
+async function readImport(given) {
+  const resolved = resolvePath(given);
+  if (resolved.error) return resolved;
+  const ext = path.extname(resolved.path).toLowerCase();
+  if (!IMPORT_EXTENSIONS.has(ext)) {
+    return { error: `${resolved.path} is not a file Boldbobbin imports: SVG or PDF artwork, a machine file or a .vemb design (a picture goes through boldbobbin_add_picture)` };
+  }
+  const st = await statOf(resolved.path);
+  if (!st || !st.isFile()) return { error: `no file at ${resolved.path}` };
+  if (st.size > MAX_DESIGN) return { error: `the file is ${Math.round(st.size / 1024 / 1024)} MB; at most 50 MB` };
+  const bytes = await readFile(resolved.path);
+  return { data: bytes.toString("base64"), name: path.basename(resolved.path) };
+}
+
 async function writeExport(target, args, answer) {
   const result = answer?.result;
   const sc = result?.structuredContent;
@@ -248,6 +288,22 @@ async function callTool(message, params) {
     if (target.error) return toolError("bad_path", target.error);
     const { path: _path, overwrite: _overwrite, ...rest } = args;
     sent = { ...rest, delivery: "bytes" };
+  } else if (name === "boldbobbin_save" && args.path !== undefined) {
+    // A copy at path; without one, the app's own Save, no file here.
+    target = await saveTarget(args);
+    if (target.error) return toolError("bad_path", target.error);
+    const { path: _path, overwrite: _overwrite, ...rest } = args;
+    sent = { ...rest, delivery: "bytes" };
+  } else if (name === "boldbobbin_import") {
+    const file = await readImport(args.path);
+    if (file.error) return toolError("bad_path", file.error);
+    const { path: _path, ...rest } = args;
+    sent = { ...rest, data: file.data, name: file.name };
+  } else if (name === "boldbobbin_open") {
+    const design = await readDesign(args.path);
+    if (design.error) return toolError("bad_path", design.error);
+    const { path: _path, ...rest } = args;
+    sent = { ...rest, data: design.data, name: design.name };
   }
 
   const forwarded = {
@@ -264,7 +320,9 @@ async function callTool(message, params) {
     if (won) {
       const sessionId = won.a.result.structuredContent?.sessionId;
       if (typeof sessionId === "string") sessionPeers.set(sessionId, won.peer);
-      return won.a.result;
+      // The bridge's own version beside the app's, for the agent to report.
+      const withRelay = { ...won.a.result.structuredContent, relayVersion: VERSION };
+      return { ...won.a.result, content: [{ type: "text", text: JSON.stringify(withRelay) }], structuredContent: withRelay };
     }
     // A code no app recognizes: the answer of the one that had a code
     // waiting says more than "no code is waiting".
@@ -284,7 +342,7 @@ async function callTool(message, params) {
   if (!peer) return toolError("no_session", "unknown sessionId; ask the person for a new code (File > Connect an AI agent…)");
   const answer = await peer.call(forwarded);
   if (answer?.error) return toolError("app_error", answer.error.message ?? "the app could not answer");
-  if (target) return writeExport(target, args, answer);
+  if (target) return writeExport(target, name === "boldbobbin_save" ? { ...args, format: "vemb" } : args, answer);
   return answer?.result ?? toolError("no_app", "Boldbobbin did not answer");
 }
 
