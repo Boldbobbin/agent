@@ -58,7 +58,7 @@ const MAX_MESSAGE = 32 * 1024 * 1024;
 /** A tab is pinged this often, and dropped after this long in silence. */
 const PING_MS = 30_000;
 const SILENT_MS = 90_000;
-const VERSION = "0.5.0";
+const VERSION = "0.5.1";
 /** The largest picture boldbobbin_add_picture reads. */
 const MAX_PICTURE = 15 * 1024 * 1024;
 
